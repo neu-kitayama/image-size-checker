@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMAGE SIZE CHECK — 画像サイズ確認ツール</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Limelight&family=Noto+Sans+JP:wght@300;400;500;700;900&display=swap');
+
+  :root{
+    --black:#111111;
+    --line:#d8d8d8;
+    --line-dark:#111111;
+    --paper:#ffffff;
+    --gray:#8a8a8a;
+    --accent:#b8935f;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  body{
+    font-family:'Noto Sans JP', 'Hiragino Sans', sans-serif;
+    color:var(--black);
+    background:var(--paper);
+    -webkit-font-smoothing:antialiased;
+    letter-spacing:0.02em;
+  }
+
+  /* ===== Header ===== */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:32px;
+    max-width:1040px;
+    margin:0 auto;
+    padding:48px 24px;
+  }
+  .hero-image{
+    display:block;
+    width:250px;
+    max-width:40%;
+    aspect-ratio:250 / 312;
+    object-fit:cover;
+    flex-shrink:0;
+  }
+  .header-text{
+    text-align:left;
+  }
+  .kicker{
+    font-size:11px;
+    letter-spacing:0.4em;
+    color:var(--gray);
+    text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  h1.logo{
+    font-family:'Limelight', 'Noto Sans JP', sans-serif;
+    font-weight:400;
+    font-size:clamp(20px, 3vw, 36px);
+    letter-spacing:0.02em;
+    line-height:1.15;
+    white-space:nowrap;
+  }
+  @media (max-width:640px){
+    header{ flex-direction:column; padding:40px 20px; }
+    .hero-image{ max-width:60%; }
+    .header-text{ text-align:center; }
+    h1.logo{ white-space:normal; font-size:clamp(20px, 6vw, 30px); }
+  }
+  main{
+    max-width:1040px;
+    margin:0 auto;
+    padding:32px 24px 120px;
+  }
+
+  /* ===== Drop zone ===== */
+  #dropzone{
+    background:#f2f2f2;
+    padding:70px 24px;
+    text-align:center;
+    cursor:pointer;
+    transition:background .25s ease;
+    position:relative;
+  }
+  #dropzone.dragover{
+    background:#e8e8e8;
+  }
+  #dropzone .dz-mark{
+    font-family:'Noto Sans JP', sans-serif;
+    font-weight:500;
+    font-size:15px;
+    letter-spacing:0.15em;
+    margin-bottom:10px;
+  }
+  #dropzone .dz-sub{
+    font-size:11.5px;
+    color:var(--gray);
+    letter-spacing:0.1em;
+  }
+  #fileInput{ display:none; }
+
+  /* ===== Toolbar ===== */
+  .toolbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-top:48px;
+    margin-bottom:18px;
+    padding-bottom:10px;
+    border-bottom:1px solid var(--line-dark);
+  }
+  .toolbar .count{
+    font-size:12px;
+    letter-spacing:0.15em;
+    color:var(--gray);
+    text-transform:uppercase;
+  }
+  .toolbar .count b{ color:var(--black); font-weight:700; }
+  .clear-btn{
+    background:none;
+    border:none;
+    font-size:11px;
+    letter-spacing:0.15em;
+    text-transform:uppercase;
+    color:var(--black);
+    cursor:pointer;
+    border-bottom:1px solid var(--black);
+    padding-bottom:2px;
+  }
+  .clear-btn:hover{ color:var(--accent); border-color:var(--accent); }
+
+  /* ===== Table ===== */
+  #results{ width:100%; overflow-x:auto; }
+  .empty-msg{
+    text-align:center;
+    color:var(--gray);
+    font-size:12px;
+    letter-spacing:0.1em;
+    padding:40px 0;
+    display:none;
+  }
+
+  table{
+    width:100%;
+    border-collapse:collapse;
+  }
+  thead th{
+    font-size:10.5px;
+    letter-spacing:0.15em;
+    text-transform:uppercase;
+    color:var(--gray);
+    font-weight:500;
+    text-align:left;
+    padding:10px 12px;
+    border-bottom:1px solid var(--line-dark);
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:16px 12px;
+    border-bottom:1px solid var(--line);
+    font-size:13px;
+    vertical-align:middle;
+  }
+  tbody tr:hover{ background:#fafafa; }
+
+  td.thumb-cell{ width:64px; }
+  .thumb{
+    width:56px;
+    height:56px;
+    object-fit:cover;
+    border:1px solid var(--line);
+    display:block;
+  }
+  td.name-cell{ max-width:260px; }
+  .fname{
+    font-weight:500;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    display:block;
+  }
+  td.dim-cell{
+    font-family:'Noto Sans JP', sans-serif;
+    font-weight:700;
+    font-size:20px;
+    letter-spacing:0.02em;
+    white-space:nowrap;
+  }
+  td.resize-cell{ white-space:nowrap; }
+  .dim-input{
+    width:64px;
+    font-family:'Noto Sans JP', sans-serif;
+    font-weight:700;
+    font-size:19px;
+    letter-spacing:0.02em;
+    color:var(--black);
+    background:transparent;
+    border:none;
+    border-bottom:1px solid var(--line);
+    padding:2px 0;
+    -moz-appearance:textfield;
+  }
+  .dim-input::-webkit-outer-spin-button,
+  .dim-input::-webkit-inner-spin-button{
+    -webkit-appearance:none;
+    margin:0;
+  }
+  .dim-input:focus{
+    outline:none;
+    border-bottom-color:var(--accent);
+  }
+  .dim-cell .unit, .resize-cell .unit{
+    color:var(--gray);
+    font-size:11px;
+  }
+  td.type-cell{
+    color:var(--gray);
+    text-transform:uppercase;
+    font-size:11px;
+    letter-spacing:0.08em;
+  }
+  .remove-btn{
+    background:none;
+    border:none;
+    color:var(--gray);
+    cursor:pointer;
+    font-size:16px;
+    line-height:1;
+    padding:4px 8px;
+    transition:color .2s;
+  }
+  .remove-btn:hover{ color:var(--black); }
+
+  footer{
+    text-align:center;
+    padding:28px 24px;
+    border-top:1px solid var(--line);
+    font-size:10.5px;
+    letter-spacing:0.15em;
+    color:var(--gray);
+    text-transform:uppercase;
+  }
+
+  @media (max-width:640px){
+    #dropzone{ padding:48px 16px; }
+    thead th:nth-child(3), tbody td:nth-child(3){ display:none; }
+    td.name-cell{ max-width:120px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <img class="hero-image" id="heroImage" src="" alt="">
+  <div class="header-text">
+    <div class="kicker">Utility Tool</div>
+    <h1 class="logo">Super Image Size Checker</h1>
+  </div>
+</header>
+
+<main>
+  <div id="dropzone">
+    <div class="dz-mark">ここに画像ファイルをドロップ</div>
+    <div class="dz-sub">またはクリックしてファイルを選択（複数選択可）</div>
+    <input type="file" id="fileInput" accept="image/*" multiple>
+  </div>
+
+  <div class="toolbar">
+    <div class="count"><b id="fileCount">0</b> Files</div>
+    <button class="clear-btn" id="clearBtn">Clear All</button>
+  </div>
+
+  <div id="results">
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>Preview</th>
+          <th>File Name</th>
+          <th>Type</th>
+          <th>Size</th>
+          <th>Width</th>
+          <th>Height</th>
+          <th>New Width</th>
+          <th>New Height</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+    <div class="empty-msg" id="emptyMsg">画像がありません</div>
+  </div>
+</main>
+
+<footer>Image Size Check Tool</footer>
+
+<script>
+  const heroImages = [
+    'img/img_01_web.jpg',
+    'img/img_02_web.jpg',
+    'img/img_03_web.jpg',
+    'img/img_04_web.jpg',
+    'img/img_05_web.jpg'
+  ];
+  document.getElementById('heroImage').src = heroImages[Math.floor(Math.random() * heroImages.length)];
+
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const resultsBody = document.getElementById('resultsBody');
+  const emptyMsg = document.getElementById('emptyMsg');
+  const fileCount = document.getElementById('fileCount');
+  const clearBtn = document.getElementById('clearBtn');
+
+  let counter = 0;
+
+  function formatBytes(bytes){
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function updateEmptyState(){
+    const hasRows = resultsBody.children.length > 0;
+    emptyMsg.style.display = hasRows ? 'none' : 'block';
+    document.getElementById('resultsTable').style.display = hasRows ? 'table' : 'none';
+    fileCount.textContent = resultsBody.children.length;
+  }
+
+  function addImageRow(file){
+    if (!file.type.startsWith('image/')) return;
+
+    const id = 'row-' + (++counter);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = function(){
+      const tr = document.createElement('tr');
+      tr.id = id;
+      tr.dataset.ratio = img.naturalWidth / img.naturalHeight;
+      tr.innerHTML = `
+        <td class="thumb-cell"><img class="thumb" src="${url}" alt=""></td>
+        <td class="name-cell"><span class="fname" title="${file.name}">${file.name}</span></td>
+        <td class="type-cell">${file.type.replace('image/', '') || '—'}</td>
+        <td>${formatBytes(file.size)}</td>
+        <td class="dim-cell">${img.naturalWidth}<span class="unit"> px</span></td>
+        <td class="dim-cell">${img.naturalHeight}<span class="unit"> px</span></td>
+        <td class="resize-cell"><input type="number" class="dim-input w-input" value="${img.naturalWidth}" min="1"><span class="unit"> px</span></td>
+        <td class="resize-cell"><input type="number" class="dim-input h-input" value="${img.naturalHeight}" min="1"><span class="unit"> px</span></td>
+        <td><button class="remove-btn" data-target="${id}" title="削除">×</button></td>
+      `;
+      resultsBody.appendChild(tr);
+      updateEmptyState();
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
+
+  function handleFiles(fileList){
+    Array.from(fileList).forEach(addImageRow);
+  }
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    handleFiles(e.target.files);
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.add('dragover');
+    });
+  });
+
+  ['dragleave', 'drop'].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove('dragover');
+    });
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    if (dt && dt.files) handleFiles(dt.files);
+  });
+
+  resultsBody.addEventListener('input', (e) => {
+    const row = e.target.closest('tr');
+    if (!row) return;
+    const ratio = parseFloat(row.dataset.ratio);
+    if (!ratio) return;
+
+    if (e.target.classList.contains('w-input')){
+      const w = parseFloat(e.target.value);
+      if (w > 0) row.querySelector('.h-input').value = Math.round(w / ratio);
+    } else if (e.target.classList.contains('h-input')){
+      const h = parseFloat(e.target.value);
+      if (h > 0) row.querySelector('.w-input').value = Math.round(h * ratio);
+    }
+  });
+
+  resultsBody.addEventListener('click', (e) => {
+    if (e.target.classList.contains('remove-btn')){
+      const row = document.getElementById(e.target.dataset.target);
+      const img = row.querySelector('img.thumb');
+      if (img) URL.revokeObjectURL(img.src);
+      row.remove();
+      updateEmptyState();
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    Array.from(resultsBody.querySelectorAll('img.thumb')).forEach(img => URL.revokeObjectURL(img.src));
+    resultsBody.innerHTML = '';
+    updateEmptyState();
+  });
+
+  updateEmptyState();
+</script>
+
+</body>
+</html>
