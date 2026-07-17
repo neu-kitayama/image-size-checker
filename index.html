@@ -232,6 +232,21 @@
   }
   .remove-btn:hover{ color:var(--black); }
 
+  .export-btn{
+    background:none;
+    border:1px solid var(--line-dark);
+    color:var(--black);
+    cursor:pointer;
+    font-family:'Noto Sans JP', sans-serif;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    padding:7px 14px;
+    white-space:nowrap;
+    transition:background .2s ease, color .2s ease;
+  }
+  .export-btn:hover{ background:var(--black); color:#fff; }
+
   footer{
     text-align:center;
     padding:28px 24px;
@@ -283,6 +298,7 @@
           <th>Height</th>
           <th>New Width</th>
           <th>New Height</th>
+          <th></th>
           <th></th>
         </tr>
       </thead>
@@ -337,6 +353,9 @@
       const tr = document.createElement('tr');
       tr.id = id;
       tr.dataset.ratio = img.naturalWidth / img.naturalHeight;
+      tr.dataset.type = file.type;
+      const dotIndex = file.name.lastIndexOf('.');
+      tr.dataset.baseName = dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name;
       tr.innerHTML = `
         <td class="thumb-cell"><img class="thumb" src="${url}" alt=""></td>
         <td class="name-cell"><span class="fname" title="${file.name}">${file.name}</span></td>
@@ -346,6 +365,7 @@
         <td class="dim-cell">${img.naturalHeight}<span class="unit"> px</span></td>
         <td class="resize-cell"><input type="number" class="dim-input w-input" value="${img.naturalWidth}" min="1"><span class="unit"> px</span></td>
         <td class="resize-cell"><input type="number" class="dim-input h-input" value="${img.naturalHeight}" min="1"><span class="unit"> px</span></td>
+        <td><button class="export-btn" data-target="${id}">Download</button></td>
         <td><button class="remove-btn" data-target="${id}" title="削除">×</button></td>
       `;
       resultsBody.appendChild(tr);
@@ -355,6 +375,38 @@
       URL.revokeObjectURL(url);
     };
     img.src = url;
+  }
+
+  function exportImage(row){
+    const w = parseInt(row.querySelector('.w-input').value, 10);
+    const h = parseInt(row.querySelector('.h-input').value, 10);
+    if (!(w > 0) || !(h > 0)) return;
+
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/png';
+    const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
+    const baseName = row.dataset.baseName || 'image';
+    const thumbSrc = row.querySelector('.thumb').src;
+
+    const img = new Image();
+    img.onload = function(){
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${baseName}_${w}x${h}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, mimeType, 0.92);
+    };
+    img.src = thumbSrc;
   }
 
   function handleFiles(fileList){
@@ -411,6 +463,9 @@
       if (img) URL.revokeObjectURL(img.src);
       row.remove();
       updateEmptyState();
+    } else if (e.target.classList.contains('export-btn')){
+      const row = document.getElementById(e.target.dataset.target);
+      if (row) exportImage(row);
     }
   });
 
