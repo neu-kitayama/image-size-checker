@@ -160,13 +160,48 @@
   }
   .clear-btn:hover{ color:var(--accent); border-color:var(--accent); }
 
+  /* ===== Quality ===== */
+  .quality-toolbar{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:16px;
+    margin-top:32px;
+    padding:20px 24px;
+    background:#f7f7f7;
+  }
+  .quality-toolbar-label{
+    font-size:11px;
+    letter-spacing:0.15em;
+    text-transform:uppercase;
+    color:var(--gray);
+    font-weight:500;
+    white-space:nowrap;
+  }
+  #qualitySlider{
+    flex:1;
+    max-width:240px;
+    accent-color:var(--black);
+  }
+  .quality-value{
+    font-family:'Noto Sans JP', sans-serif;
+    font-weight:700;
+    font-size:16px;
+    width:52px;
+    text-align:right;
+  }
+  .quality-hint{
+    font-size:11px;
+    color:var(--gray);
+  }
+
   /* ===== Fit to size ===== */
   .fit-toolbar{
     display:flex;
     align-items:center;
     flex-wrap:wrap;
     gap:16px;
-    margin-top:32px;
+    margin-top:20px;
     padding:20px 24px;
     background:#f7f7f7;
   }
@@ -337,6 +372,13 @@
     <input type="file" id="fileInput" accept="image/*" multiple>
   </div>
 
+  <div class="quality-toolbar">
+    <div class="quality-toolbar-label">Compression Quality</div>
+    <input type="range" id="qualitySlider" min="10" max="100" value="90">
+    <span class="quality-value" id="qualityValue">90%</span>
+    <span class="quality-hint">(まとめてダウンロードする際の圧縮度)</span>
+  </div>
+
   <div class="fit-toolbar">
     <div class="fit-toolbar-label">Fit to Size (白背景で収める)</div>
     <div class="fit-toolbar-inputs">
@@ -401,6 +443,16 @@
   const downloadAllFitBtn = document.getElementById('downloadAllFitBtn');
   const fitWidthInput = document.getElementById('fitWidth');
   const fitHeightInput = document.getElementById('fitHeight');
+  const qualitySlider = document.getElementById('qualitySlider');
+  const qualityValue = document.getElementById('qualityValue');
+
+  qualitySlider.addEventListener('input', () => {
+    qualityValue.textContent = `${qualitySlider.value}%`;
+  });
+
+  function getQuality(){
+    return parseInt(qualitySlider.value, 10) / 100;
+  }
 
   let counter = 0;
 
@@ -659,7 +711,7 @@
         mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
         ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
       }
-      const quality = mimeType === 'image/png' ? undefined : 0.9;
+      const quality = mimeType === 'image/png' ? undefined : getQuality();
 
       try {
         const bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
@@ -690,7 +742,7 @@
       const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
       const mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
       const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
-      const quality = mimeType === 'image/png' ? undefined : 0.9;
+      const quality = mimeType === 'image/png' ? undefined : getQuality();
 
       try {
         const bytes = await fitToBytes(thumbSrc, boxW, boxH, mimeType, quality);
