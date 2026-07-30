@@ -338,6 +338,109 @@
   }
   .export-btn:hover{ background:var(--black); color:#fff; }
 
+  .compare-btn{
+    background:none;
+    border:1px solid var(--line);
+    color:var(--gray);
+    cursor:pointer;
+    font-family:'Noto Sans JP', sans-serif;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    padding:7px 14px;
+    white-space:nowrap;
+    transition:background .2s ease, color .2s ease, border-color .2s ease;
+  }
+  .compare-btn:hover{ background:var(--black); color:#fff; border-color:var(--black); }
+
+  /* ===== Compare modal ===== */
+  .modal-overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(17,17,17,0.7);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    z-index:1000;
+  }
+  .modal-overlay[hidden]{ display:none; }
+  .modal-card{
+    background:#fff;
+    width:100%;
+    max-width:880px;
+    max-height:90vh;
+    overflow:auto;
+    padding:32px;
+    position:relative;
+  }
+  .modal-close{
+    position:absolute;
+    top:16px;
+    right:16px;
+    background:none;
+    border:none;
+    font-size:24px;
+    line-height:1;
+    color:var(--gray);
+    cursor:pointer;
+  }
+  .modal-close:hover{ color:var(--black); }
+  .modal-title{
+    font-family:'Noto Sans JP', sans-serif;
+    font-weight:700;
+    font-size:15px;
+    margin-bottom:24px;
+    padding-right:32px;
+    overflow-wrap:break-word;
+  }
+  .modal-compare{
+    display:flex;
+    gap:24px;
+    flex-wrap:wrap;
+  }
+  .modal-pane{
+    flex:1 1 260px;
+    min-width:0;
+    text-align:center;
+  }
+  .modal-img{
+    display:block;
+    width:100%;
+    max-height:360px;
+    object-fit:contain;
+    background:#f7f7f7;
+    margin:0 auto 14px;
+  }
+  .modal-label{
+    font-size:11px;
+    letter-spacing:0.15em;
+    text-transform:uppercase;
+    color:var(--gray);
+    margin-bottom:6px;
+  }
+  .modal-caption{
+    font-family:'Noto Sans JP', sans-serif;
+    font-size:13px;
+    line-height:1.7;
+  }
+  .modal-caption b{ font-weight:700; }
+  .modal-reduction{
+    color:var(--accent);
+    font-weight:700;
+  }
+  .modal-webp-hint{
+    margin-top:10px;
+    padding-top:10px;
+    border-top:1px solid var(--line);
+    font-size:12px;
+    color:var(--gray);
+  }
+  .modal-webp-hint b{
+    color:var(--black);
+    font-weight:700;
+  }
+
   footer{
     text-align:center;
     padding:28px 24px;
@@ -412,6 +515,7 @@
           <th>New Height</th>
           <th></th>
           <th></th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="resultsBody"></tbody>
@@ -421,6 +525,26 @@
 </main>
 
 <footer>Image Size Check Tool</footer>
+
+<div class="modal-overlay" id="compareModal" hidden>
+  <div class="modal-card">
+    <button class="modal-close" id="modalClose" aria-label="閉じる">×</button>
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-compare">
+      <div class="modal-pane">
+        <div class="modal-label">Original</div>
+        <img class="modal-img" id="modalOriginalImg" alt="">
+        <div class="modal-caption" id="modalOriginalCaption"></div>
+      </div>
+      <div class="modal-pane">
+        <div class="modal-label">Compressed Preview</div>
+        <img class="modal-img" id="modalCompressedImg" alt="">
+        <div class="modal-caption" id="modalCompressedCaption">生成中…</div>
+        <div class="modal-webp-hint" id="modalWebpHint"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   const heroImages = [
@@ -445,6 +569,15 @@
   const fitHeightInput = document.getElementById('fitHeight');
   const qualitySlider = document.getElementById('qualitySlider');
   const qualityValue = document.getElementById('qualityValue');
+  const compareModal = document.getElementById('compareModal');
+  const modalClose = document.getElementById('modalClose');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalOriginalImg = document.getElementById('modalOriginalImg');
+  const modalOriginalCaption = document.getElementById('modalOriginalCaption');
+  const modalCompressedImg = document.getElementById('modalCompressedImg');
+  const modalCompressedCaption = document.getElementById('modalCompressedCaption');
+  const modalWebpHint = document.getElementById('modalWebpHint');
+  let currentCompressedUrl = null;
 
   qualitySlider.addEventListener('input', () => {
     qualityValue.value = qualitySlider.value;
@@ -494,6 +627,9 @@
       tr.dataset.ratio = img.naturalWidth / img.naturalHeight;
       tr.dataset.type = file.type;
       tr.dataset.fileName = file.name;
+      tr.dataset.originalSize = file.size;
+      tr.dataset.naturalWidth = img.naturalWidth;
+      tr.dataset.naturalHeight = img.naturalHeight;
       const dotIndex = file.name.lastIndexOf('.');
       tr.dataset.baseName = dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name;
       tr.innerHTML = `
@@ -505,6 +641,7 @@
         <td class="dim-cell">${img.naturalHeight}<span class="unit"> px</span></td>
         <td class="resize-cell"><input type="number" class="dim-input w-input" value="${img.naturalWidth}" min="1"><span class="unit"> px</span></td>
         <td class="resize-cell"><input type="number" class="dim-input h-input" value="${img.naturalHeight}" min="1"><span class="unit"> px</span></td>
+        <td><button class="compare-btn" data-target="${id}">Compare</button></td>
         <td><button class="export-btn" data-target="${id}">Download</button></td>
         <td><button class="remove-btn" data-target="${id}" title="削除">×</button></td>
       `;
@@ -540,6 +677,72 @@
       }, mimeType, 0.92);
     };
     img.src = thumbSrc;
+  }
+
+  function closeCompareModal(){
+    compareModal.hidden = true;
+    if (currentCompressedUrl){
+      URL.revokeObjectURL(currentCompressedUrl);
+      currentCompressedUrl = null;
+    }
+    modalCompressedImg.src = '';
+  }
+
+  async function openCompareModal(row){
+    const thumbSrc = row.querySelector('.thumb').src;
+    const naturalWidth = parseInt(row.dataset.naturalWidth, 10);
+    const naturalHeight = parseInt(row.dataset.naturalHeight, 10);
+    const originalSize = parseInt(row.dataset.originalSize, 10);
+
+    const w = parseInt(row.querySelector('.w-input').value, 10) || naturalWidth;
+    const h = parseInt(row.querySelector('.h-input').value, 10) || naturalHeight;
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
+    const quality = mimeType === 'image/png' ? undefined : getQuality();
+
+    modalTitle.textContent = row.dataset.fileName || row.dataset.baseName || '';
+    modalOriginalImg.src = thumbSrc;
+    modalOriginalCaption.innerHTML =
+      `<b>${naturalWidth} × ${naturalHeight}px</b><br>${formatBytes(originalSize)}`;
+
+    if (currentCompressedUrl){
+      URL.revokeObjectURL(currentCompressedUrl);
+      currentCompressedUrl = null;
+    }
+    modalCompressedImg.src = '';
+    modalCompressedCaption.textContent = '生成中…';
+    modalWebpHint.textContent = '';
+    compareModal.hidden = false;
+
+    try {
+      const bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
+      const blob = new Blob([bytes], { type: mimeType });
+      currentCompressedUrl = URL.createObjectURL(blob);
+      modalCompressedImg.src = currentCompressedUrl;
+
+      const reduction = originalSize > 0 ? Math.round((1 - bytes.length / originalSize) * 1000) / 10 : 0;
+      const reductionText = reduction >= 0 ? `${reduction}% 軽量化` : `${Math.abs(reduction)}% 増加`;
+      const qualityText = quality !== undefined ? ` · quality ${Math.round(quality * 100)}%` : '';
+      modalCompressedCaption.innerHTML =
+        `<b>${w} × ${h}px</b>${qualityText}<br>${formatBytes(bytes.length)} <span class="modal-reduction">(${reductionText})</span>`;
+
+      // PNG is lossless, so the quality slider has no effect and a same-format
+      // re-encode can end up larger than the original. Show what WebP would
+      // achieve instead, since that's the actual way to shrink a PNG.
+      if (mimeType === 'image/png'){
+        try {
+          const webpBytes = await resizeToBytes(thumbSrc, w, h, 'image/webp', getQuality());
+          const webpReduction = originalSize > 0 ? Math.round((1 - webpBytes.length / originalSize) * 1000) / 10 : 0;
+          modalWebpHint.innerHTML =
+            `PNGは無劣化のため軽量化に限界があります。<br>参考: WebPに変換すると <b>${formatBytes(webpBytes.length)}</b>(${webpReduction}% 軽量化)`;
+        } catch (webpErr){
+          console.error('Failed to build webp reference', webpErr);
+        }
+      }
+    } catch (err){
+      modalCompressedCaption.textContent = 'プレビューの生成に失敗しました';
+      console.error('Failed to build compare preview', err);
+    }
   }
 
   // ----- Minimal ZIP writer (store method, no compression needed since
@@ -826,7 +1029,18 @@
     } else if (e.target.classList.contains('export-btn')){
       const row = document.getElementById(e.target.dataset.target);
       if (row) exportImage(row);
+    } else if (e.target.classList.contains('compare-btn')){
+      const row = document.getElementById(e.target.dataset.target);
+      if (row) openCompareModal(row);
     }
+  });
+
+  modalClose.addEventListener('click', closeCompareModal);
+  compareModal.addEventListener('click', (e) => {
+    if (e.target === compareModal) closeCompareModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !compareModal.hidden) closeCompareModal();
   });
 
   downloadAllBtn.addEventListener('click', () => downloadAllResized(false));
