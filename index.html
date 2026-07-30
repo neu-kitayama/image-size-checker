@@ -484,6 +484,7 @@
       tr.id = id;
       tr.dataset.ratio = img.naturalWidth / img.naturalHeight;
       tr.dataset.type = file.type;
+      tr.dataset.fileName = file.name;
       const dotIndex = file.name.lastIndexOf('.');
       tr.dataset.baseName = dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name;
       tr.innerHTML = `
@@ -702,20 +703,21 @@
       const baseName = row.dataset.baseName || 'image';
       const thumbSrc = row.querySelector('.thumb').src;
 
-      let mimeType, ext;
+      let mimeType;
       if (forceWebp){
         mimeType = 'image/webp';
-        ext = 'webp';
       } else {
         const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
         mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
-        ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
       }
       const quality = mimeType === 'image/png' ? undefined : getQuality();
+      // Forcing WebP changes the actual encoded format, so the extension must
+      // follow; otherwise the original file name is kept exactly as-is.
+      const outputName = forceWebp ? `${baseName}.webp` : (row.dataset.fileName || baseName);
 
       try {
         const bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
-        files.push({ name: `${baseName}_${w}x${h}.${ext}`, data: bytes });
+        files.push({ name: outputName, data: bytes });
       } catch (err){
         console.error('Failed to resize', baseName, err);
       }
@@ -741,12 +743,12 @@
       const thumbSrc = row.querySelector('.thumb').src;
       const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
       const mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
-      const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
       const quality = mimeType === 'image/png' ? undefined : getQuality();
+      const outputName = row.dataset.fileName || baseName;
 
       try {
         const bytes = await fitToBytes(thumbSrc, boxW, boxH, mimeType, quality);
-        files.push({ name: `${baseName}_${boxW}x${boxH}.${ext}`, data: bytes });
+        files.push({ name: outputName, data: bytes });
       } catch (err){
         console.error('Failed to fit', baseName, err);
       }
