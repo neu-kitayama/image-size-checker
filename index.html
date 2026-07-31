@@ -715,26 +715,38 @@
     compareModal.hidden = false;
 
     try {
-      const bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
-      const blob = new Blob([bytes], { type: mimeType });
+      let bytes, blobType, captionExtra;
+
+      if (mimeType === 'image/png' && supportsPngQuantize){
+        const canvas = await drawResizedCanvas(thumbSrc, w, h);
+        const result = await quantizeCanvasToPngBytes(canvas, getQuality());
+        bytes = result.bytes;
+        blobType = 'image/png';
+        captionExtra = ` · ${result.paletteSize}色パレット`;
+      } else {
+        bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
+        blobType = mimeType;
+        captionExtra = quality !== undefined ? ` · quality ${Math.round(quality * 100)}%` : '';
+      }
+
+      const blob = new Blob([bytes], { type: blobType });
       currentCompressedUrl = URL.createObjectURL(blob);
       modalCompressedImg.src = currentCompressedUrl;
 
       const reduction = originalSize > 0 ? Math.round((1 - bytes.length / originalSize) * 1000) / 10 : 0;
       const reductionText = reduction >= 0 ? `${reduction}% 軽量化` : `${Math.abs(reduction)}% 増加`;
-      const qualityText = quality !== undefined ? ` · quality ${Math.round(quality * 100)}%` : '';
       modalCompressedCaption.innerHTML =
-        `<b>${w} × ${h}px</b>${qualityText}<br>${formatBytes(bytes.length)} <span class="modal-reduction">(${reductionText})</span>`;
+        `<b>${w} × ${h}px</b>${captionExtra}<br>${formatBytes(bytes.length)} <span class="modal-reduction">(${reductionText})</span>`;
 
-      // PNG is lossless, so the quality slider has no effect and a same-format
-      // re-encode can end up larger than the original. Show what WebP would
-      // achieve instead, since that's the actual way to shrink a PNG.
+      // Even with palette quantization, lossy WebP usually shrinks further —
+      // show it as a reference for anyone who wants to go smaller still.
       if (mimeType === 'image/png'){
         try {
           const webpBytes = await resizeToBytes(thumbSrc, w, h, 'image/webp', getQuality());
           const webpReduction = originalSize > 0 ? Math.round((1 - webpBytes.length / originalSize) * 1000) / 10 : 0;
-          modalWebpHint.innerHTML =
-            `PNGは無劣化のため軽量化に限界があります。<br>参考: WebPに変換すると <b>${formatBytes(webpBytes.length)}</b>(${webpReduction}% 軽量化)`;
+          modalWebpHint.innerHTML = supportsPngQuantize
+            ? `さらに小さくしたい場合、WebPに変換すると <b>${formatBytes(webpBytes.length)}</b>(${webpReduction}% 軽量化)`
+            : `お使いのブラウザはPNG最適化に非対応です。参考: WebPに変換すると <b>${formatBytes(webpBytes.length)}</b>(${webpReduction}% 軽量化)`;
         } catch (webpErr){
           console.error('Failed to build webp reference', webpErr);
         }
@@ -902,6 +914,234 @@
     URL.revokeObjectURL(url);
   }
 
+  // ----- PNG palette quantization (same idea as TinyPNG/pngquant): reduce
+  // millions of colors down to <=256, then write our own indexed PNG. This is
+  // the only way to actually shrink a PNG, since canvas.toBlob('image/png')
+  // always writes full truecolor and ignores the quality parameter. -----
+  const supportsPngQuantize = typeof CompressionStream !== 'undefined';
+
+  function loadImageElement(src){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('image load failed'));
+      img.src = src;
+    });
+  }
+
+  async function drawResizedCanvas(thumbSrc, w, h){
+    const img = await loadImageElement(thumbSrc);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    return canvas;
+  }
+
+  async function drawFitCanvas(thumbSrc, boxW, boxH){
+    const img = await loadImageElement(thumbSrc);
+    const scale = Math.min(boxW / img.naturalWidth, boxH / img.naturalHeight);
+    const drawW = Math.round(img.naturalWidth * scale);
+    const drawH = Math.round(img.naturalHeight * scale);
+    const offsetX = Math.round((boxW - drawW) / 2);
+    const offsetY = Math.round((boxH - drawH) / 2);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = boxW;
+    canvas.height = boxH;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, boxW, boxH);
+    ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+    return canvas;
+  }
+
+  // Median-cut color quantization: build a histogram of exact colors, then
+  // repeatedly split the most populous bucket along its widest channel until
+  // there are `maxColors` buckets, and take each bucket's weighted average
+  // as a palette entry.
+  function medianCutPalette(pixels, maxColors){
+    const histogram = new Map();
+    for (let i = 0; i < pixels.length; i += 4){
+      const key = pixels[i] * 16777216 + pixels[i + 1] * 65536 + pixels[i + 2] * 256 + pixels[i + 3];
+      const entry = histogram.get(key);
+      if (entry) entry.count++;
+      else histogram.set(key, { r: pixels[i], g: pixels[i + 1], b: pixels[i + 2], a: pixels[i + 3], count: 1 });
+    }
+
+    let buckets = [Array.from(histogram.values())];
+
+    while (buckets.length < maxColors){
+      let targetIdx = -1;
+      let targetRange = -1;
+      let targetChannel = 'r';
+
+      buckets.forEach((bucket, idx) => {
+        if (bucket.length <= 1) return;
+        ['r', 'g', 'b', 'a'].forEach((ch) => {
+          let min = 255, max = 0;
+          bucket.forEach((c) => { if (c[ch] < min) min = c[ch]; if (c[ch] > max) max = c[ch]; });
+          const range = max - min;
+          if (range > targetRange){
+            targetRange = range;
+            targetIdx = idx;
+            targetChannel = ch;
+          }
+        });
+      });
+
+      if (targetIdx === -1) break;
+
+      const bucket = buckets[targetIdx];
+      bucket.sort((a, b) => a[targetChannel] - b[targetChannel]);
+
+      const totalCount = bucket.reduce((sum, c) => sum + c.count, 0);
+      let running = 0, splitPos = 0;
+      for (; splitPos < bucket.length; splitPos++){
+        running += bucket[splitPos].count;
+        if (running >= totalCount / 2) break;
+      }
+      splitPos = Math.max(1, Math.min(bucket.length - 1, splitPos));
+
+      buckets.splice(targetIdx, 1, bucket.slice(0, splitPos), bucket.slice(splitPos));
+    }
+
+    return buckets.map((bucket) => {
+      let rSum = 0, gSum = 0, bSum = 0, aSum = 0, count = 0;
+      bucket.forEach((c) => {
+        rSum += c.r * c.count; gSum += c.g * c.count; bSum += c.b * c.count; aSum += c.a * c.count;
+        count += c.count;
+      });
+      return {
+        r: Math.round(rSum / count), g: Math.round(gSum / count),
+        b: Math.round(bSum / count), a: Math.round(aSum / count)
+      };
+    });
+  }
+
+  // Map every pixel to its nearest palette entry, diffusing the quantization
+  // error to neighboring pixels (Floyd-Steinberg) so gradients dither instead
+  // of banding.
+  function ditherToPalette(pixels, w, h, palette){
+    const work = new Float32Array(pixels.length);
+    work.set(pixels);
+    const indices = new Uint8Array(w * h);
+
+    function nearestIndex(r, g, b, a){
+      let best = 0, bestDist = Infinity;
+      for (let i = 0; i < palette.length; i++){
+        const p = palette[i];
+        const dr = r - p.r, dg = g - p.g, db = b - p.b, da = a - p.a;
+        const dist = dr * dr + dg * dg + db * db + da * da;
+        if (dist < bestDist){ bestDist = dist; best = i; }
+      }
+      return best;
+    }
+
+    function addError(x, y, idx, er, eg, eb, ea, factor){
+      if (x < 0 || x >= w || y < 0 || y >= h) return;
+      const i = (y * w + x) * 4;
+      work[i] += er * factor;
+      work[i + 1] += eg * factor;
+      work[i + 2] += eb * factor;
+      work[i + 3] += ea * factor;
+    }
+
+    for (let y = 0; y < h; y++){
+      for (let x = 0; x < w; x++){
+        const idx = (y * w + x) * 4;
+        const r = Math.max(0, Math.min(255, Math.round(work[idx])));
+        const g = Math.max(0, Math.min(255, Math.round(work[idx + 1])));
+        const b = Math.max(0, Math.min(255, Math.round(work[idx + 2])));
+        const a = Math.max(0, Math.min(255, Math.round(work[idx + 3])));
+        const pi = nearestIndex(r, g, b, a);
+        indices[y * w + x] = pi;
+
+        const p = palette[pi];
+        const er = r - p.r, eg = g - p.g, eb = b - p.b, ea = a - p.a;
+        addError(x + 1, y, idx, er, eg, eb, ea, 7 / 16);
+        addError(x - 1, y + 1, idx, er, eg, eb, ea, 3 / 16);
+        addError(x, y + 1, idx, er, eg, eb, ea, 5 / 16);
+        addError(x + 1, y + 1, idx, er, eg, eb, ea, 1 / 16);
+      }
+    }
+
+    return indices;
+  }
+
+  async function zlibCompress(bytes){
+    const cs = new CompressionStream('deflate');
+    const writer = cs.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const buf = await new Response(cs.readable).arrayBuffer();
+    return new Uint8Array(buf);
+  }
+
+  function pngChunk(type, data){
+    const typeBytes = new TextEncoder().encode(type);
+    const chunk = new Uint8Array(4 + 4 + data.length + 4);
+    const dv = new DataView(chunk.buffer);
+    dv.setUint32(0, data.length, false);
+    chunk.set(typeBytes, 4);
+    chunk.set(data, 8);
+    const crcInput = new Uint8Array(4 + data.length);
+    crcInput.set(typeBytes, 0);
+    crcInput.set(data, 4);
+    dv.setUint32(8 + data.length, crc32(crcInput), false);
+    return chunk;
+  }
+
+  async function buildIndexedPng(w, h, palette, indices){
+    const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+
+    const ihdrData = new Uint8Array(13);
+    const ihdv = new DataView(ihdrData.buffer);
+    ihdv.setUint32(0, w, false);
+    ihdv.setUint32(4, h, false);
+    ihdrData[8] = 8;  // bit depth
+    ihdrData[9] = 3;  // color type: indexed
+    const ihdr = pngChunk('IHDR', ihdrData);
+
+    const plteData = new Uint8Array(palette.length * 3);
+    palette.forEach((c, i) => {
+      plteData[i * 3] = c.r; plteData[i * 3 + 1] = c.g; plteData[i * 3 + 2] = c.b;
+    });
+    const plte = pngChunk('PLTE', plteData);
+
+    let lastNonOpaque = -1;
+    palette.forEach((c, i) => { if (c.a < 255) lastNonOpaque = i; });
+    const trns = lastNonOpaque === -1 ? new Uint8Array(0) : pngChunk('tRNS', Uint8Array.from(palette.slice(0, lastNonOpaque + 1).map((c) => c.a)));
+
+    const stride = w + 1;
+    const raw = new Uint8Array(stride * h);
+    for (let y = 0; y < h; y++){
+      raw[y * stride] = 0; // filter type: None
+      raw.set(indices.subarray(y * w, y * w + w), y * stride + 1);
+    }
+    const compressed = await zlibCompress(raw);
+    const idat = pngChunk('IDAT', compressed);
+    const iend = pngChunk('IEND', new Uint8Array(0));
+
+    const parts = [signature, ihdr, plte, trns, idat, iend];
+    const total = parts.reduce((sum, p) => sum + p.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    parts.forEach((p) => { out.set(p, offset); offset += p.length; });
+    return out;
+  }
+
+  // quality (0.1–1.0) maps to palette size: lower quality = fewer colors = smaller file.
+  async function quantizeCanvasToPngBytes(canvas, quality){
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const paletteSize = Math.max(2, Math.min(256, Math.round(quality * 256)));
+    const palette = medianCutPalette(imageData.data, paletteSize);
+    const indices = ditherToPalette(imageData.data, canvas.width, canvas.height, palette);
+    const bytes = await buildIndexedPng(canvas.width, canvas.height, palette, indices);
+    return { bytes, paletteSize: palette.length };
+  }
+
   async function downloadAllResized(forceWebp){
     const rows = Array.from(resultsBody.querySelectorAll('tr'));
     if (!rows.length) return;
@@ -928,7 +1168,13 @@
       const outputName = forceWebp ? `${baseName}.webp` : (row.dataset.fileName || baseName);
 
       try {
-        const bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
+        let bytes;
+        if (mimeType === 'image/png' && supportsPngQuantize){
+          const canvas = await drawResizedCanvas(thumbSrc, w, h);
+          bytes = (await quantizeCanvasToPngBytes(canvas, getQuality())).bytes;
+        } else {
+          bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
+        }
         files.push({ name: outputName, data: bytes });
       } catch (err){
         console.error('Failed to resize', baseName, err);
@@ -959,7 +1205,13 @@
       const outputName = row.dataset.fileName || baseName;
 
       try {
-        const bytes = await fitToBytes(thumbSrc, boxW, boxH, mimeType, quality);
+        let bytes;
+        if (mimeType === 'image/png' && supportsPngQuantize){
+          const canvas = await drawFitCanvas(thumbSrc, boxW, boxH);
+          bytes = (await quantizeCanvasToPngBytes(canvas, getQuality())).bytes;
+        } else {
+          bytes = await fitToBytes(thumbSrc, boxW, boxH, mimeType, quality);
+        }
         files.push({ name: outputName, data: bytes });
       } catch (err){
         console.error('Failed to fit', baseName, err);
