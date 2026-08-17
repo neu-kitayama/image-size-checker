@@ -1090,6 +1090,46 @@
       };
     });
 
+    // Median-cut's split-on-widest-channel gives a decent starting palette,
+    // but it's not locally optimal. A few rounds of Lloyd's algorithm
+    // (k-means: reassign every source color to its nearest current palette
+    // entry, then recenter each entry on the weighted average of what it was
+    // assigned) noticeably sharpens it — this is close to what pngquant does
+    // internally, and it's why plain median-cut alone tends to look and
+    // compress worse. Protected colors are pinned exactly and excluded from
+    // recentering; everything still gets to be a reassignment target so nearby
+    // colors correctly "belong" to them instead of a movable entry.
+    const allHistogramColors = Array.from(histogram.values());
+    const fixedCount = protectedColors.length;
+    const full = palette.concat(protectedColors);
+    const REFINE_ITERATIONS = 3;
+
+    for (let iter = 0; iter < REFINE_ITERATIONS; iter++){
+      const sums = full.map(() => ({ r: 0, g: 0, b: 0, a: 0, count: 0 }));
+      allHistogramColors.forEach((c) => {
+        let best = 0, bestDist = Infinity;
+        for (let i = 0; i < full.length; i++){
+          const p = full[i];
+          const dr = c.r - p.r, dg = c.g - p.g, db = c.b - p.b, da = c.a - p.a;
+          const dist = dr * dr + dg * dg + db * db + da * da;
+          if (dist < bestDist){ bestDist = dist; best = i; }
+        }
+        const s = sums[best];
+        s.r += c.r * c.count; s.g += c.g * c.count; s.b += c.b * c.count; s.a += c.a * c.count;
+        s.count += c.count;
+      });
+      for (let i = 0; i < palette.length; i++){
+        const s = sums[i];
+        if (s.count > 0){
+          palette[i] = {
+            r: Math.round(s.r / s.count), g: Math.round(s.g / s.count),
+            b: Math.round(s.b / s.count), a: Math.round(s.a / s.count)
+          };
+          full[i] = palette[i];
+        }
+      }
+    }
+
     return palette.concat(protectedColors.map((c) => ({ r: c.r, g: c.g, b: c.b, a: c.a })));
   }
 
@@ -1137,7 +1177,14 @@
         indices[y * w + x] = pi;
 
         const p = palette[pi];
-        const er = r - p.r, eg = g - p.g, eb = b - p.b, ea = a - p.a;
+        // Diffusing only a fraction of the error (rather than the full
+        // Floyd-Steinberg 100%) keeps gradients from looking grainy/static-y
+        // while still avoiding hard banding — full-strength diffusion pushes
+        // every pixel's error onto its neighbors even when the palette is
+        // already a close match, which is what read as visible noise.
+        const DITHER_STRENGTH = 0.75;
+        const er = (r - p.r) * DITHER_STRENGTH, eg = (g - p.g) * DITHER_STRENGTH,
+              eb = (b - p.b) * DITHER_STRENGTH, ea = (a - p.a) * DITHER_STRENGTH;
         addError(x + 1, y, er, eg, eb, ea, 7 / 16);
         addError(x - 1, y + 1, er, eg, eb, ea, 3 / 16);
         addError(x, y + 1, er, eg, eb, ea, 5 / 16);
@@ -1146,6 +1193,86 @@
     }
 
     return indices;
+  }
+
+  // PNG row filtering (bpp=1 for 8-bit indexed color): trying all five
+  // standard filter types per row and keeping whichever minimizes the sum of
+  // absolute (signed) byte values — the same heuristic libpng's adaptive
+  // filtering uses — lets DEFLATE find far more repetition than always
+  // storing raw index values (filter type "None"), which is what this was
+  // doing before and left real compression on the table.
+  function paethPredictor(a, b, c){
+    const p = a + b - c;
+    const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+    if (pa <= pb && pa <= pc) return a;
+    if (pb <= pc) return b;
+    return c;
+  }
+
+  function filterScore(data){
+    let score = 0;
+    for (let i = 0; i < data.length; i++){
+      const v = data[i];
+      score += v < 128 ? v : 256 - v;
+    }
+    return score;
+  }
+
+  function filterScanlines(indices, w, h){
+    const stride = w + 1;
+    const raw = new Uint8Array(stride * h);
+    let prevRow = new Uint8Array(w); // all zero = "row -1" per the PNG spec
+
+    for (let y = 0; y < h; y++){
+      const row = indices.subarray(y * w, y * w + w);
+
+      const none = new Uint8Array(w);
+      none.set(row);
+
+      const sub = new Uint8Array(w);
+      for (let x = 0; x < w; x++){
+        sub[x] = (row[x] - (x >= 1 ? row[x - 1] : 0)) & 0xFF;
+      }
+
+      const up = new Uint8Array(w);
+      for (let x = 0; x < w; x++){
+        up[x] = (row[x] - prevRow[x]) & 0xFF;
+      }
+
+      const average = new Uint8Array(w);
+      for (let x = 0; x < w; x++){
+        const a = x >= 1 ? row[x - 1] : 0;
+        average[x] = (row[x] - Math.floor((a + prevRow[x]) / 2)) & 0xFF;
+      }
+
+      const paeth = new Uint8Array(w);
+      for (let x = 0; x < w; x++){
+        const a = x >= 1 ? row[x - 1] : 0;
+        const b = prevRow[x];
+        const c = x >= 1 ? prevRow[x - 1] : 0;
+        paeth[x] = (row[x] - paethPredictor(a, b, c)) & 0xFF;
+      }
+
+      const candidates = [
+        { type: 0, data: none },
+        { type: 1, data: sub },
+        { type: 2, data: up },
+        { type: 3, data: average },
+        { type: 4, data: paeth }
+      ];
+      let best = candidates[0];
+      let bestScore = filterScore(best.data);
+      for (let i = 1; i < candidates.length; i++){
+        const score = filterScore(candidates[i].data);
+        if (score < bestScore){ best = candidates[i]; bestScore = score; }
+      }
+
+      raw[y * stride] = best.type;
+      raw.set(best.data, y * stride + 1);
+      prevRow = row;
+    }
+
+    return raw;
   }
 
   async function zlibCompress(bytes){
@@ -1192,12 +1319,7 @@
     palette.forEach((c, i) => { if (c.a < 255) lastNonOpaque = i; });
     const trns = lastNonOpaque === -1 ? new Uint8Array(0) : pngChunk('tRNS', Uint8Array.from(palette.slice(0, lastNonOpaque + 1).map((c) => c.a)));
 
-    const stride = w + 1;
-    const raw = new Uint8Array(stride * h);
-    for (let y = 0; y < h; y++){
-      raw[y * stride] = 0; // filter type: None
-      raw.set(indices.subarray(y * w, y * w + w), y * stride + 1);
-    }
+    const raw = filterScanlines(indices, w, h);
     const compressed = await zlibCompress(raw);
     const idat = pngChunk('IDAT', compressed);
     const iend = pngChunk('IEND', new Uint8Array(0));
