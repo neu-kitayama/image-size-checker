@@ -967,6 +967,13 @@
   // repeatedly split the most populous bucket along its widest channel until
   // there are `maxColors` buckets, and take each bucket's weighted average
   // as a palette entry.
+  //
+  // Plain frequency-weighted median-cut lets a large flat background
+  // out-vote small but visually critical details — a bold white headline
+  // over a big solid-color banner has far fewer pixels than the background,
+  // so its nearest palette entry can end up an off-white gray instead of
+  // pure white. To avoid that, pure white/black get a reserved palette slot
+  // whenever they're meaningfully present but not already closely matched.
   function medianCutPalette(pixels, maxColors){
     const histogram = new Map();
     for (let i = 0; i < pixels.length; i += 4){
@@ -976,9 +983,31 @@
       else histogram.set(key, { r: pixels[i], g: pixels[i + 1], b: pixels[i + 2], a: pixels[i + 3], count: 1 });
     }
 
-    let buckets = [Array.from(histogram.values())];
+    const allColors = Array.from(histogram.values());
+    const totalPixels = pixels.length / 4;
 
-    while (buckets.length < maxColors){
+    const anchorCandidates = [
+      { r: 255, g: 255, b: 255, a: 255 },
+      { r: 0, g: 0, b: 0, a: 255 }
+    ];
+    const reservedAnchors = anchorCandidates.filter((anchor) => {
+      let hasCloseMatch = false;
+      let nearbyCount = 0;
+      allColors.forEach((c) => {
+        const dr = c.r - anchor.r, dg = c.g - anchor.g, db = c.b - anchor.b, da = c.a - anchor.a;
+        const dist = dr * dr + dg * dg + db * db + da * da;
+        if (dist < 20) hasCloseMatch = true;
+        if (dist < 900) nearbyCount += c.count;
+      });
+      // Reserve a slot only when the anchor is meaningfully present (not a
+      // stray pixel) and isn't already represented by a close-enough color.
+      return !hasCloseMatch && nearbyCount / totalPixels > 0.0005;
+    });
+
+    let buckets = [allColors];
+    const targetBuckets = Math.max(1, maxColors - reservedAnchors.length);
+
+    while (buckets.length < targetBuckets){
       let targetIdx = -1;
       let targetRange = -1;
       let targetChannel = 'r';
@@ -1013,7 +1042,7 @@
       buckets.splice(targetIdx, 1, bucket.slice(0, splitPos), bucket.slice(splitPos));
     }
 
-    return buckets.map((bucket) => {
+    const palette = buckets.map((bucket) => {
       let rSum = 0, gSum = 0, bSum = 0, aSum = 0, count = 0;
       bucket.forEach((c) => {
         rSum += c.r * c.count; gSum += c.g * c.count; bSum += c.b * c.count; aSum += c.a * c.count;
@@ -1024,6 +1053,8 @@
         b: Math.round(bSum / count), a: Math.round(aSum / count)
       };
     });
+
+    return palette.concat(reservedAnchors);
   }
 
   // Map every pixel to its nearest palette entry, diffusing the quantization
