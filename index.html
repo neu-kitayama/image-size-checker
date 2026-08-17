@@ -969,12 +969,18 @@
   // as a palette entry.
   //
   // Plain frequency-weighted median-cut lets a large flat background
-  // out-vote small but visually critical details — a bold white headline
-  // over a big solid-color banner has far fewer pixels than the background,
-  // so its nearest palette entry can end up an off-white gray instead of
-  // pure white. To avoid that, pure white/black get a reserved palette slot
-  // whenever they're meaningfully present but not already closely matched.
-  function medianCutPalette(pixels, maxColors){
+  // out-vote small but visually critical details — a headline over a big
+  // solid-color banner has far fewer pixels than the background, so its
+  // nearest palette entry can drift toward whatever nearby color wins the
+  // vote, no matter what that headline's actual color is (a hardcoded
+  // "protect pure white" rule only helps when the text really is pure
+  // white — real designs just as often use an off-white, a brand color, a
+  // logo, etc). The general fix: detect which colors sit on a sharp edge
+  // (anti-aliased text/logo boundaries against a very different
+  // background) and guarantee those a palette slot of their own, so small
+  // but visually important details survive quantization regardless of
+  // their actual color.
+  function medianCutPalette(pixels, w, h, maxColors){
     const histogram = new Map();
     for (let i = 0; i < pixels.length; i += 4){
       const key = pixels[i] * 16777216 + pixels[i + 1] * 65536 + pixels[i + 2] * 256 + pixels[i + 3];
@@ -983,27 +989,59 @@
       else histogram.set(key, { r: pixels[i], g: pixels[i + 1], b: pixels[i + 2], a: pixels[i + 3], count: 1 });
     }
 
-    const allColors = Array.from(histogram.values());
-    const totalPixels = pixels.length / 4;
+    const totalPixels = w * h;
+    const EDGE_THRESHOLD = 6000; // squared color distance; catches text/logo edges, not gradients or noise
 
-    const anchorCandidates = [
-      { r: 255, g: 255, b: 255, a: 255 },
-      { r: 0, g: 0, b: 0, a: 255 }
-    ];
-    // Which anchors are meaningfully present in the *source* image at all
-    // (not just a stray pixel)? Whether they're already well represented in
-    // the palette can only be checked once the palette itself exists, below.
-    const presentAnchors = anchorCandidates.filter((anchor) => {
-      let nearbyCount = 0;
-      allColors.forEach((c) => {
-        const dr = c.r - anchor.r, dg = c.g - anchor.g, db = c.b - anchor.b, da = c.a - anchor.a;
-        if (dr * dr + dg * dg + db * db + da * da < 900) nearbyCount += c.count;
-      });
-      return nearbyCount / totalPixels > 0.0005;
+    function keyAt(i){
+      return pixels[i] * 16777216 + pixels[i + 1] * 65536 + pixels[i + 2] * 256 + pixels[i + 3];
+    }
+    function distSq(i, j){
+      const dr = pixels[i] - pixels[j], dg = pixels[i + 1] - pixels[j + 1],
+            db = pixels[i + 2] - pixels[j + 2], da = pixels[i + 3] - pixels[j + 3];
+      return dr * dr + dg * dg + db * db + da * da;
+    }
+
+    const edgeKeys = new Set();
+    for (let y = 0; y < h; y++){
+      for (let x = 0; x < w; x++){
+        const i = (y * w + x) * 4;
+        if (x + 1 < w){
+          const j = i + 4;
+          if (distSq(i, j) > EDGE_THRESHOLD){ edgeKeys.add(keyAt(i)); edgeKeys.add(keyAt(j)); }
+        }
+        if (y + 1 < h){
+          const j = i + w * 4;
+          if (distSq(i, j) > EDGE_THRESHOLD){ edgeKeys.add(keyAt(i)); edgeKeys.add(keyAt(j)); }
+        }
+      }
+    }
+
+    // Candidates: colors that touch a sharp edge and cover a small-to-modest
+    // share of the image (big enough to matter, small enough that plain
+    // median-cut would likely crush them into a neighboring bucket).
+    const protectedCandidates = [];
+    const poolColors = [];
+    histogram.forEach((c, key) => {
+      const frac = c.count / totalPixels;
+      if (edgeKeys.has(key) && frac > 0.00005 && frac < 0.05){
+        protectedCandidates.push(c);
+      } else {
+        poolColors.push(c);
+      }
     });
 
-    let buckets = [allColors];
-    const targetBuckets = Math.max(1, maxColors - presentAnchors.length);
+    // Cap how many slots protection can claim, and prioritize the most
+    // substantial candidates first (anti-aliasing produces lots of one-off
+    // blend shades along an edge; sorting by count naturally surfaces the
+    // real "interior" detail color over those transient blends).
+    protectedCandidates.sort((a, b) => b.count - a.count);
+    const maxProtected = Math.max(0, Math.floor(maxColors * 0.3));
+    const protectedColors = protectedCandidates.slice(0, maxProtected);
+    const overflowColors = protectedCandidates.slice(maxProtected);
+
+    const initialPool = poolColors.concat(overflowColors);
+    let buckets = initialPool.length ? [initialPool] : [];
+    const targetBuckets = Math.max(1, maxColors - protectedColors.length);
 
     while (buckets.length < targetBuckets){
       let targetIdx = -1;
@@ -1052,14 +1090,7 @@
       };
     });
 
-    // Only append an anchor if the palette we actually ended up with doesn't
-    // already land close to it — otherwise it'd just be a wasted duplicate.
-    const reservedAnchors = presentAnchors.filter((anchor) => !palette.some((c) => {
-      const dr = c.r - anchor.r, dg = c.g - anchor.g, db = c.b - anchor.b, da = c.a - anchor.a;
-      return (dr * dr + dg * dg + db * db + da * da) < 400;
-    }));
-
-    return palette.concat(reservedAnchors);
+    return palette.concat(protectedColors.map((c) => ({ r: c.r, g: c.g, b: c.b, a: c.a })));
   }
 
   // Map every pixel to its nearest palette entry, diffusing the quantization
@@ -1184,7 +1215,7 @@
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const paletteSize = Math.max(2, Math.min(256, Math.round(quality * 256)));
-    const palette = medianCutPalette(imageData.data, paletteSize);
+    const palette = medianCutPalette(imageData.data, canvas.width, canvas.height, paletteSize);
     const indices = ditherToPalette(imageData.data, canvas.width, canvas.height, palette);
     const bytes = await buildIndexedPng(canvas.width, canvas.height, palette, indices);
     return { bytes, paletteSize: palette.length };
