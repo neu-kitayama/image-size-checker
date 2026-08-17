@@ -1027,25 +1027,17 @@
   }
 
   // Map every pixel to its nearest palette entry, diffusing the quantization
-  // error to neighboring pixels (Floyd-Steinberg) so gradients dither instead
-  // of banding.
-  // 4x4 Bayer matrix: an ordered (positional, not error-diffused) dither.
-  // Error-diffusion dithering (Floyd-Steinberg) scatters noise that looks
-  // random to DEFLATE, which can make lower palette sizes compress *worse*
-  // than higher ones. A repeating ordered pattern stays compressible while
-  // still breaking up banding on gradients.
-  const BAYER_4X4 = [
-    [0, 8, 2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1, 9],
-    [15, 7, 13, 5]
-  ];
-
+  // error to neighboring pixels (Floyd-Steinberg), the same technique
+  // pngquant/TinyPNG use. Because the diffused error is zero (or negligible)
+  // across a genuinely flat/solid-color region, flat areas stay perfectly
+  // flat — only regions that actually need it get dithered. An earlier
+  // ordered (Bayer-matrix) version avoided that, but its fixed repeating
+  // pattern showed up as a visible checkerboard texture on flat color
+  // areas, which this avoids.
   function ditherToPalette(pixels, w, h, palette){
+    const work = new Float32Array(pixels.length);
+    work.set(pixels);
     const indices = new Uint8Array(w * h);
-    // Approximate spacing between neighboring palette colors along one
-    // channel, used to scale how strong the ordered-dither bias is.
-    const step = 256 / Math.cbrt(palette.length);
 
     function nearestIndex(r, g, b, a){
       let best = 0, bestDist = Infinity;
@@ -1058,15 +1050,31 @@
       return best;
     }
 
+    function addError(x, y, er, eg, eb, ea, factor){
+      if (x < 0 || x >= w || y < 0 || y >= h) return;
+      const i = (y * w + x) * 4;
+      work[i] += er * factor;
+      work[i + 1] += eg * factor;
+      work[i + 2] += eb * factor;
+      work[i + 3] += ea * factor;
+    }
+
     for (let y = 0; y < h; y++){
       for (let x = 0; x < w; x++){
         const idx = (y * w + x) * 4;
-        const bias = (BAYER_4X4[y % 4][x % 4] / 16 - 0.5) * step;
-        const r = Math.max(0, Math.min(255, pixels[idx] + bias));
-        const g = Math.max(0, Math.min(255, pixels[idx + 1] + bias));
-        const b = Math.max(0, Math.min(255, pixels[idx + 2] + bias));
-        const a = pixels[idx + 3];
-        indices[y * w + x] = nearestIndex(r, g, b, a);
+        const r = Math.max(0, Math.min(255, Math.round(work[idx])));
+        const g = Math.max(0, Math.min(255, Math.round(work[idx + 1])));
+        const b = Math.max(0, Math.min(255, Math.round(work[idx + 2])));
+        const a = Math.max(0, Math.min(255, Math.round(work[idx + 3])));
+        const pi = nearestIndex(r, g, b, a);
+        indices[y * w + x] = pi;
+
+        const p = palette[pi];
+        const er = r - p.r, eg = g - p.g, eb = b - p.b, ea = a - p.a;
+        addError(x + 1, y, er, eg, eb, ea, 7 / 16);
+        addError(x - 1, y + 1, er, eg, eb, ea, 3 / 16);
+        addError(x, y + 1, er, eg, eb, ea, 5 / 16);
+        addError(x + 1, y + 1, er, eg, eb, ea, 1 / 16);
       }
     }
 
