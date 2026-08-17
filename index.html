@@ -990,22 +990,20 @@
       { r: 255, g: 255, b: 255, a: 255 },
       { r: 0, g: 0, b: 0, a: 255 }
     ];
-    const reservedAnchors = anchorCandidates.filter((anchor) => {
-      let hasCloseMatch = false;
+    // Which anchors are meaningfully present in the *source* image at all
+    // (not just a stray pixel)? Whether they're already well represented in
+    // the palette can only be checked once the palette itself exists, below.
+    const presentAnchors = anchorCandidates.filter((anchor) => {
       let nearbyCount = 0;
       allColors.forEach((c) => {
         const dr = c.r - anchor.r, dg = c.g - anchor.g, db = c.b - anchor.b, da = c.a - anchor.a;
-        const dist = dr * dr + dg * dg + db * db + da * da;
-        if (dist < 20) hasCloseMatch = true;
-        if (dist < 900) nearbyCount += c.count;
+        if (dr * dr + dg * dg + db * db + da * da < 900) nearbyCount += c.count;
       });
-      // Reserve a slot only when the anchor is meaningfully present (not a
-      // stray pixel) and isn't already represented by a close-enough color.
-      return !hasCloseMatch && nearbyCount / totalPixels > 0.0005;
+      return nearbyCount / totalPixels > 0.0005;
     });
 
     let buckets = [allColors];
-    const targetBuckets = Math.max(1, maxColors - reservedAnchors.length);
+    const targetBuckets = Math.max(1, maxColors - presentAnchors.length);
 
     while (buckets.length < targetBuckets){
       let targetIdx = -1;
@@ -1053,6 +1051,13 @@
         b: Math.round(bSum / count), a: Math.round(aSum / count)
       };
     });
+
+    // Only append an anchor if the palette we actually ended up with doesn't
+    // already land close to it — otherwise it'd just be a wasted duplicate.
+    const reservedAnchors = presentAnchors.filter((anchor) => !palette.some((c) => {
+      const dr = c.r - anchor.r, dg = c.g - anchor.g, db = c.b - anchor.b, da = c.a - anchor.a;
+      return (dr * dr + dg * dg + db * db + da * da) < 400;
+    }));
 
     return palette.concat(reservedAnchors);
   }
