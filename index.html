@@ -133,10 +133,10 @@
     color:var(--black);
     cursor:pointer;
     font-family:'Noto Sans JP', sans-serif;
-    font-size:11px;
+    font-size:10px;
     letter-spacing:0.1em;
     text-transform:uppercase;
-    padding:9px 16px;
+    padding:7px 12px;
     white-space:nowrap;
     transition:background .2s ease, color .2s ease, opacity .2s ease;
   }
@@ -237,9 +237,8 @@
     border-collapse:collapse;
   }
   thead th{
-    font-size:10.5px;
-    letter-spacing:0.15em;
-    text-transform:uppercase;
+    font-size:10px;
+    letter-spacing:0.06em;
     color:var(--gray);
     font-weight:500;
     text-align:left;
@@ -274,11 +273,12 @@
   td.dim-cell{
     font-family:'Noto Sans JP', sans-serif;
     font-weight:700;
-    font-size:20px;
+    font-size:17px;
     letter-spacing:0.02em;
     white-space:nowrap;
   }
   td.resize-cell{ white-space:nowrap; }
+  .resize-cell .dim-input{ font-size:17px; }
   .dim-input{
     width:64px;
     font-family:'Noto Sans JP', sans-serif;
@@ -329,14 +329,29 @@
     color:var(--black);
     cursor:pointer;
     font-family:'Noto Sans JP', sans-serif;
-    font-size:11px;
+    font-size:10px;
     letter-spacing:0.1em;
     text-transform:uppercase;
-    padding:7px 14px;
+    padding:6px 11px;
     white-space:nowrap;
     transition:background .2s ease, color .2s ease;
   }
   .export-btn:hover{ background:var(--black); color:#fff; }
+
+  .export-webp-btn{
+    background:none;
+    border:1px solid var(--line-dark);
+    color:var(--black);
+    cursor:pointer;
+    font-family:'Noto Sans JP', sans-serif;
+    font-size:10px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    padding:6px 11px;
+    white-space:nowrap;
+    transition:background .2s ease, color .2s ease;
+  }
+  .export-webp-btn:hover{ background:var(--black); color:#fff; }
 
   .compare-btn{
     background:none;
@@ -344,10 +359,10 @@
     color:var(--gray);
     cursor:pointer;
     font-family:'Noto Sans JP', sans-serif;
-    font-size:11px;
+    font-size:10px;
     letter-spacing:0.1em;
     text-transform:uppercase;
-    padding:7px 14px;
+    padding:6px 11px;
     white-space:nowrap;
     transition:background .2s ease, color .2s ease, border-color .2s ease;
   }
@@ -489,14 +504,15 @@
       <span class="fit-x">×</span>
       <input type="number" class="dim-input fit-input" id="fitHeight" value="800" min="1"><span class="unit"> px</span>
     </div>
-    <button class="bulk-btn" id="downloadAllFitBtn" disabled>Download All (Fit to Size)</button>
+    <button class="bulk-btn" id="downloadAllFitBtn" disabled>DL All (Fit to Size)</button>
+    <button class="bulk-btn" id="downloadAllFitWebpBtn" disabled>DL All (Fit to Size WebP)</button>
   </div>
 
   <div class="toolbar">
     <div class="count"><b id="fileCount">0</b> Files</div>
     <div class="toolbar-actions">
-      <button class="bulk-btn" id="downloadAllBtn" disabled>Download All (Resized)</button>
-      <button class="bulk-btn" id="downloadAllWebpBtn" disabled>Download All as WebP</button>
+      <button class="bulk-btn" id="downloadAllBtn" disabled>Download All</button>
+      <button class="bulk-btn" id="downloadAllWebpBtn" disabled>DL All (WebP)</button>
       <button class="clear-btn" id="clearBtn">Clear All</button>
     </div>
   </div>
@@ -513,6 +529,7 @@
           <th>Height</th>
           <th>New Width</th>
           <th>New Height</th>
+          <th></th>
           <th></th>
           <th></th>
           <th></th>
@@ -565,6 +582,7 @@
   const downloadAllBtn = document.getElementById('downloadAllBtn');
   const downloadAllWebpBtn = document.getElementById('downloadAllWebpBtn');
   const downloadAllFitBtn = document.getElementById('downloadAllFitBtn');
+  const downloadAllFitWebpBtn = document.getElementById('downloadAllFitWebpBtn');
   const fitWidthInput = document.getElementById('fitWidth');
   const fitHeightInput = document.getElementById('fitHeight');
   const qualitySlider = document.getElementById('qualitySlider');
@@ -612,6 +630,7 @@
     downloadAllBtn.disabled = !hasRows;
     downloadAllWebpBtn.disabled = !hasRows;
     downloadAllFitBtn.disabled = !hasRows;
+    downloadAllFitWebpBtn.disabled = !hasRows;
   }
 
   function addImageRow(file){
@@ -642,7 +661,8 @@
         <td class="resize-cell"><input type="number" class="dim-input w-input" value="${img.naturalWidth}" min="1"><span class="unit"> px</span></td>
         <td class="resize-cell"><input type="number" class="dim-input h-input" value="${img.naturalHeight}" min="1"><span class="unit"> px</span></td>
         <td><button class="compare-btn" data-target="${id}">Compare</button></td>
-        <td><button class="export-btn" data-target="${id}">Download</button></td>
+        <td><button class="export-btn" data-target="${id}">DL</button></td>
+        <td><button class="export-webp-btn" data-target="${id}">DL WebP</button></td>
         <td><button class="remove-btn" data-target="${id}" title="削除">×</button></td>
       `;
       resultsBody.appendChild(tr);
@@ -683,6 +703,24 @@
       downloadBlob(blob, outputName);
     } catch (err){
       console.error('Failed to export image', baseName, err);
+    }
+  }
+
+  async function exportImageAsWebp(row){
+    const w = parseInt(row.querySelector('.w-input').value, 10);
+    const h = parseInt(row.querySelector('.h-input').value, 10);
+    if (!(w > 0) || !(h > 0)) return;
+
+    const baseName = row.dataset.baseName || 'image';
+    const thumbSrc = row.querySelector('.thumb').src;
+    const outputName = `${baseName}.webp`;
+
+    try {
+      const bytes = await resizeToBytes(thumbSrc, w, h, 'image/webp', getQuality());
+      const blob = new Blob([bytes], { type: 'image/webp' });
+      downloadBlob(blob, outputName);
+    } catch (err){
+      console.error('Failed to export image as webp', baseName, err);
     }
   }
 
@@ -729,7 +767,9 @@
         const result = await quantizeCanvasToPngBytes(canvas, getQuality());
         bytes = result.bytes;
         blobType = 'image/png';
-        captionExtra = ` · ${result.paletteSize}色パレット`;
+        captionExtra = result.lossless
+          ? ` · 無劣化(全${result.paletteSize}色)`
+          : ` · ${result.paletteSize}色パレット`;
       } else {
         bytes = await resizeToBytes(thumbSrc, w, h, mimeType, quality);
         blobType = mimeType;
@@ -915,10 +955,14 @@
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // Revoking immediately can race with Safari still reading the blob URL
+    // to start the save, which is one of the ways it falls back to just
+    // opening the file in a tab instead of downloading it.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ----- PNG palette quantization (same idea as TinyPNG/pngquant): reduce
@@ -1332,15 +1376,56 @@
     return out;
   }
 
+  // If the source already has 256 or fewer unique colors, it can be stored
+  // as an indexed PNG with zero quantization loss — every pixel keeps its
+  // exact original color, just referenced through a palette. Reducing an
+  // already-small palette further wouldn't meaningfully shrink the file
+  // (the index data is still 8 bits per pixel either way) but would throw
+  // away color accuracy for no benefit, so this always wins when it applies.
+  function buildExactPalette(pixels){
+    const histogram = new Map();
+    for (let i = 0; i < pixels.length; i += 4){
+      const key = pixels[i] * 16777216 + pixels[i + 1] * 65536 + pixels[i + 2] * 256 + pixels[i + 3];
+      if (!histogram.has(key)){
+        histogram.set(key, {
+          r: pixels[i], g: pixels[i + 1], b: pixels[i + 2], a: pixels[i + 3],
+          index: histogram.size
+        });
+      }
+      if (histogram.size > 256) return null;
+    }
+
+    const palette = new Array(histogram.size);
+    histogram.forEach((c) => { palette[c.index] = { r: c.r, g: c.g, b: c.b, a: c.a }; });
+
+    const indices = new Uint8Array(pixels.length / 4);
+    for (let i = 0, p = 0; i < pixels.length; i += 4, p++){
+      const key = pixels[i] * 16777216 + pixels[i + 1] * 65536 + pixels[i + 2] * 256 + pixels[i + 3];
+      indices[p] = histogram.get(key).index;
+    }
+
+    return { palette, indices };
+  }
+
   // quality (0.1–1.0) maps to palette size: lower quality = fewer colors = smaller file.
+  // Ignored entirely when the source already fits losslessly (see above).
   async function quantizeCanvasToPngBytes(canvas, quality){
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const paletteSize = Math.max(2, Math.min(256, Math.round(quality * 256)));
-    const palette = medianCutPalette(imageData.data, canvas.width, canvas.height, paletteSize);
-    const indices = ditherToPalette(imageData.data, canvas.width, canvas.height, palette);
+
+    const exact = buildExactPalette(imageData.data);
+    let palette, indices;
+    if (exact){
+      palette = exact.palette;
+      indices = exact.indices;
+    } else {
+      const paletteSize = Math.max(2, Math.min(256, Math.round(quality * 256)));
+      palette = medianCutPalette(imageData.data, canvas.width, canvas.height, paletteSize);
+      indices = ditherToPalette(imageData.data, canvas.width, canvas.height, palette);
+    }
+
     const bytes = await buildIndexedPng(canvas.width, canvas.height, palette, indices);
-    return { bytes, paletteSize: palette.length };
+    return { bytes, paletteSize: palette.length, lossless: !!exact };
   }
 
   async function downloadAllResized(forceWebp){
@@ -1388,7 +1473,7 @@
     downloadBlob(zipBlob, forceWebp ? 'resized-images-webp.zip' : 'resized-images.zip');
   }
 
-  async function downloadAllFitToSize(){
+  async function downloadAllFitToSize(forceWebp){
     const rows = Array.from(resultsBody.querySelectorAll('tr'));
     if (!rows.length) return;
 
@@ -1400,10 +1485,18 @@
     for (const row of rows){
       const baseName = row.dataset.baseName || 'image';
       const thumbSrc = row.querySelector('.thumb').src;
-      const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-      const mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
+
+      let mimeType;
+      if (forceWebp){
+        mimeType = 'image/webp';
+      } else {
+        const supportedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        mimeType = supportedTypes.includes(row.dataset.type) ? row.dataset.type : 'image/jpeg';
+      }
       const quality = mimeType === 'image/png' ? undefined : getQuality();
-      const outputName = row.dataset.fileName || baseName;
+      // Forcing WebP changes the actual encoded format, so the extension must
+      // follow; otherwise the original file name is kept exactly as-is.
+      const outputName = forceWebp ? `${baseName}.webp` : (row.dataset.fileName || baseName);
 
       try {
         let bytes;
@@ -1422,7 +1515,7 @@
     if (!files.length) return;
 
     const zipBlob = createZip(files);
-    downloadBlob(zipBlob, `fit-${boxW}x${boxH}-images.zip`);
+    downloadBlob(zipBlob, forceWebp ? `fit-${boxW}x${boxH}-images-webp.zip` : `fit-${boxW}x${boxH}-images.zip`);
   }
 
   function handleFiles(fileList){
@@ -1482,6 +1575,9 @@
     } else if (e.target.classList.contains('export-btn')){
       const row = document.getElementById(e.target.dataset.target);
       if (row) exportImage(row);
+    } else if (e.target.classList.contains('export-webp-btn')){
+      const row = document.getElementById(e.target.dataset.target);
+      if (row) exportImageAsWebp(row);
     } else if (e.target.classList.contains('compare-btn')){
       const row = document.getElementById(e.target.dataset.target);
       if (row) openCompareModal(row);
@@ -1498,7 +1594,8 @@
 
   downloadAllBtn.addEventListener('click', () => downloadAllResized(false));
   downloadAllWebpBtn.addEventListener('click', () => downloadAllResized(true));
-  downloadAllFitBtn.addEventListener('click', downloadAllFitToSize);
+  downloadAllFitBtn.addEventListener('click', () => downloadAllFitToSize(false));
+  downloadAllFitWebpBtn.addEventListener('click', () => downloadAllFitToSize(true));
 
   clearBtn.addEventListener('click', () => {
     Array.from(resultsBody.querySelectorAll('img.thumb')).forEach(img => URL.revokeObjectURL(img.src));
